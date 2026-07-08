@@ -1,0 +1,11 @@
+sweet:
+  Names:
+    - sweet
+    - sweetin
+    - halium_arm64
+  PrettyName: Xiaomi Redmi Note 10 Pro
+  DeviceType: phone
+  GridUnit: 21
+  WebkitDpr: 2
+  PrimaryOrientation: Portrait
+  SensorfwConfig: /etc/deviceinfo/sensorfw/hybris.conf
