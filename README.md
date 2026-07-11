@@ -30,6 +30,10 @@ too — more in the installer README.
   ([`fixes/indicator-session/`](fixes/indicator-session/), [`fixes/unity8-shell/`](fixes/unity8-shell/))
 - **Long-press an app in the drawer** to pin/unpin or jump to its OpenStore page.
   ([`fixes/unity8-shell/`](fixes/unity8-shell/))
+- **Battery icon stuck at 0%/flashing** — indicator-power was reading a decoy
+  battery-authentication chip instead of the real battery. ([`fixes/indicator-power/`](fixes/indicator-power/))
+- **Restart disappearing again after a fresh flash** — a separate indicator-session gate that
+  assumes Unity shows its own combined shutdown/reboot dialog. ([`fixes/indicator-session/`](fixes/indicator-session/))
 - Holding back ~175 packages known to brick this exact image if apt updates them.
 
 Each folder under `fixes/` has the actual patched files and the real story of what was broken.
