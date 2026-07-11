@@ -1,19 +1,13 @@
 # Wireless display toggle was hidden
 
-Settings > Brightness & Display should have a "Wireless display" row for Aethercast/Miracast, but
-it's gated behind an Android property, `ubuntu.widi.supported`, that just never got set. The
-`aethercast` service itself was already installed and running the whole time.
+Settings > Brightness & Display should show a "Wireless display" row, but it's gated behind an
+Android property, `ubuntu.widi.supported`, that never got set — `aethercast` itself was already
+running the whole time.
 
-There's a commented-out line in `/etc/init/mount-android.conf` that sets this exact property —
-looks like whoever built the original image tried it and it broke something, so they just
-commented it out and left it disabled. Uncommenting it directly caused a boot hang for me too: it
-runs before the Android container's property service even exists yet, so the call just hangs
-forever and takes the whole boot down with it.
-
-The fix is `enable-widi.conf`, a separate upstart job that runs on the `android` event instead —
-that event only fires once the property service is confirmed up (something else already waits on
-this exact condition before emitting it), so the property gets set safely, after boot has already
-gotten past the risky part.
+There's a commented-out line in `/etc/init/mount-android.conf` that sets this exact property.
+Uncommenting it directly causes a boot hang: it runs before the Android container's property
+service exists yet. `enable-widi.conf` here is a separate upstart job on the `android` event
+instead, which only fires once that service is confirmed up.
 
 ## Deploying
 
@@ -25,8 +19,7 @@ sudo chmod 644 /etc/init/enable-widi.conf
 sudo mount -o remount,ro /
 ```
 
-Takes effect on next boot. To see it without rebooting: `sudo setprop ubuntu.widi.supported 1`
-then kill and restart the Settings app.
+Takes effect next boot. To see it live: `sudo setprop ubuntu.widi.supported 1`, restart Settings.
 
-Note: this only makes the toggle show up and turn on the Aethercast backend. Actually casting to a
-real Miracast receiver hasn't been tested yet.
+Note: only makes the toggle appear and turns on the Aethercast backend — actual casting to a real
+receiver hasn't been tested.

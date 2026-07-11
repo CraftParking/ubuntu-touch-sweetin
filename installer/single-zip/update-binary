@@ -1,0 +1,120 @@
+#!/sbin/sh
+# Craftparking single-zip installer: LineageOS 18.1 base + fixed Ubuntu Touch, one flash.
+# LineageOS partition writes + format data are done directly here (no nested `twrp` calls -
+# those hang when nested inside a running update-binary on this device, confirmed repeatedly).
+# The Ubuntu Touch install below reuses the existing, already-proven ubports.sh unchanged.
+#
+# Extraction note: this device's TWRP-bundled `unzip` has a 32-bit offset bug and fails with
+# "I/O error" on any zip entry whose data straddles the 2GiB mark within the archive (confirmed
+# empirically - the archive is ~2.24GB total, so this is unavoidable with plain `unzip`). Fixed by
+# bootstrapping the bundled busybox first (small, always safely under 2GiB) and using ITS unzip
+# applet - which correctly handles large offsets - for every extraction after that.
+
+OUTFD=/proc/self/fd/$2;
+ZIP="$3";
+
+ui_print() {
+  until [ ! "$1" ]; do
+    echo -e "ui_print $1\nui_print" > $OUTFD;
+    shift;
+  done;
+}
+show_progress() { echo "progress $1 $2" > $OUTFD; }
+abort() { ui_print "$*"; exit 1; }
+
+show_progress 1.0 4;
+ui_print " ";
+ui_print "    _   _ ____  ____            _        ";
+ui_print "   | | | | __ )|  _ \ ___  _ __| |_ ___  ";
+ui_print "   | | | |  _ \| |_) / _ \| '__| __/ __| ";
+ui_print "   | |_| | |_) |  __/ (_) | |  | |_\__ \ ";
+ui_print "    \___/|____/|_|   \___/|_|   \__|___/ ";
+ui_print " ";
+ui_print " Start Install LineageOS 18.1 + Ubuntu Touch / UBports";
+ui_print " Xiaomi Redmi Note 10 Pro (sweet/sweetin)";
+ui_print " ";
+ui_print " original ubuntu touch rootfs/port by dopaemon, original flashable zip by Erfan and Nobi Nobita";
+ui_print " (installer pattern based on osm0sis's anykernel2 script) - respect to all of them";
+ui_print " the LineageOS+UBports single zip merge, the mkfs/unzip fixes and the hardware/UI fixes";
+ui_print " on top of that rootfs are all my own work - Craftparking (github.com/Craftparking)";
+ui_print " ";
+
+ui_print "Bootstrapping extraction tool...";
+mkdir -p /tmp/cp-bin;
+unzip -o "$ZIP" "tools/busybox" -d /tmp/cp-bin > /tmp/cp-install.log 2>&1;
+if [ $? != 0 ]; then abort "Failed to extract busybox. Aborting."; fi;
+chmod 755 /tmp/cp-bin/tools/busybox;
+ln -sf /tmp/cp-bin/tools/busybox /tmp/cp-bin/unzip;
+chmod 755 /tmp/cp-bin/unzip;
+BB_UNZIP=/tmp/cp-bin/unzip;
+
+ui_print "Extracting bundled LineageOS partition images (SD card I/O, can take a couple minutes)...";
+# /tmp is RAM-backed (tmpfs, small) - these images total ~6.8GB, must land on the SD card, not /tmp.
+CP_EXTRACT=/external_sd/cp-extract;
+mkdir -p $CP_EXTRACT;
+$BB_UNZIP -o "$ZIP" "lineage-parts/system.img" "lineage-parts/vendor.img" "lineage-parts/product.img" "lineage-parts/odm.img" "lineage-parts/system_ext.img" "lineage-parts/boot.img" "lineage-parts/dtbo.img" "lineage-parts/vbmeta.img" "bin/mkfs.f2fs.static" -d $CP_EXTRACT >> /tmp/cp-install.log 2>&1;
+if [ $? != 0 ]; then abort "Extraction of bundled LineageOS parts failed. Aborting."; fi;
+chmod 755 $CP_EXTRACT/bin/mkfs.f2fs.static;
+
+show_progress 1.0 30;
+ui_print "Flashing LineageOS base partitions...";
+for part in system vendor product odm system_ext; do
+  ui_print " -> $part";
+  dd if=$CP_EXTRACT/lineage-parts/$part.img of=/dev/block/mapper/$part bs=4M;
+  if [ $? != 0 ]; then abort "Failed writing $part. Aborting."; fi;
+done;
+
+ui_print " -> boot (stock LineageOS kernel - overwritten below by the Halium boot image)";
+dd if=$CP_EXTRACT/lineage-parts/boot.img of=/dev/block/bootdevice/by-name/boot bs=4M;
+ui_print " -> dtbo";
+dd if=$CP_EXTRACT/lineage-parts/dtbo.img of=/dev/block/bootdevice/by-name/dtbo bs=4M;
+ui_print " -> vbmeta";
+dd if=$CP_EXTRACT/lineage-parts/vbmeta.img of=/dev/block/bootdevice/by-name/vbmeta bs=4M;
+
+show_progress 1.0 5;
+ui_print "Formatting data partition...";
+umount /data 2>/dev/null;
+DATA_DEV=/dev/block/bootdevice/by-name/userdata;
+DATA_SIZE=$(blockdev --getsize64 $DATA_DEV);
+DATA_SECTORS=$(awk "BEGIN{print int($DATA_SIZE/4096)}");
+$CP_EXTRACT/bin/mkfs.f2fs.static -t 0 $DATA_DEV $DATA_SECTORS > /tmp/cp-mkfs.log 2>&1;
+if [ $? != 0 ]; then abort "format data failed, see /tmp/cp-mkfs.log. Aborting."; fi;
+ui_print "data partition formatted";
+
+rm -rf $CP_EXTRACT;
+
+show_progress 1.0 15;
+ui_print " ";
+ui_print "Now installing Ubuntu Touch / UBports rootfs";
+ui_print " ";
+
+mount -o ro /vendor;
+mount /data;
+
+mkdir -p /data/ubports/bin;
+cd /data/ubports;
+ui_print " Extracting Zip Into /data ";
+$BB_UNZIP -o "$ZIP" "data/ubuntu.img" "data/boot.img" "tools/busybox" "ubports.sh" -d /data/ubports >> /tmp/cp-install.log 2>&1;
+if [ $? != 0 -o -z "$(ls /data/ubports/tools)" ]; then
+  abort "Unzip failed. Aborting...";
+fi;
+chmod -R 755 /data/ubports/tools /data/ubports/bin;
+bb=/data/ubports/tools/busybox;
+
+for i in $($bb --list); do
+  $bb ln -s $bb /data/ubports/bin/$i;
+done;
+if [ $? != 0 -o -z "$(ls /data/ubports/bin)" ]; then
+  abort "Recovery busybox setup failed. Aborting...";
+fi;
+PATH="/data/ubports/bin:$PATH" $bb ash /data/ubports/ubports.sh $2;
+if [ $? != "0" ]; then
+  abort "ubports.sh failed";
+fi;
+
+show_progress 1.0 2;
+umount /vendor;
+umount /data;
+rm -rf /tmp/cp-bin /tmp/cp-install.log /tmp/cp-mkfs.log;
+ui_print " ";
+ui_print "done. thanks for using this, hit up github.com/Craftparking if something's broken.";
