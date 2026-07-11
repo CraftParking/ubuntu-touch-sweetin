@@ -21,7 +21,8 @@ too — more in the installer README.
 - **Vibration didn't work** — the haptic chip reports FF support but the actual FF upload silently
   fails on this kernel. Talks to the chip directly now. ([`fixes/vibrator-aw8624/`](fixes/vibrator-aw8624/))
 - **Status bar covered the camera cutout** — no `deviceinfo` entry existed for this device, so UI
-  rendered at desktop scale. Added one, split the status bar around the notch.
+  rendered at desktop scale. Added one, split the status bar around the notch (portrait only —
+  landscape correctly falls back to the original all-right layout).
   ([`fixes/deviceinfo/`](fixes/deviceinfo/), [`fixes/unity8-shell/`](fixes/unity8-shell/))
 - **Wireless display toggle was hidden** — the property that gates it in Settings was never set.
   ([`fixes/wireless-display/`](fixes/wireless-display/))

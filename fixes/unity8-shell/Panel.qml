@@ -52,6 +52,20 @@ Item {
     // Whether our expanded menus should take up the full width of the panel
     property bool partialWidth: width >= units.gu(60)
 
+    // HAX: the camera-cutout clearance fix below only makes sense in portrait - the physical
+    // punch-hole is fixed at a spot on the display that's only horizontally centered when held
+    // upright. In landscape, root.width/2 points nowhere near the real camera, so the split
+    // would just misplace icons and overlap the app title for no reason. Landscape keeps the
+    // original stock behaviour: every icon on the right, nothing pulled out to its own row.
+    //
+    // Screen.width/height don't work for this - confirmed empirically they stay fixed at the
+    // physical panel's native portrait resolution (1080x2400) even with a rotated app in the
+    // foreground, since the shell's own coordinate space never rotates, only the app content
+    // does. orientationAngle (bound from Shell.qml's mainAppWindowOrientationAngle) tracks the
+    // actual focused app's rotation instead.
+    property int orientationAngle: 0
+    readonly property bool isPortrait: orientationAngle === 0 || orientationAngle === 180
+
     property string mode: "staged"
 
     MouseArea {
@@ -393,7 +407,7 @@ Item {
             }
             height: minimizedPanelHeight
             spacing: units.gu(1)
-            visible: !__indicators.expanded
+            visible: !__indicators.expanded && root.isPortrait
 
             Repeater {
                 model: __indicators.model
@@ -457,8 +471,9 @@ Item {
                 readonly property bool hideSessionIndicator: identifier == "indicator-session" && Math.min(Screen.width, Screen.height) <= units.gu(60)
                 // HACK for indicator-keyboard
                 readonly property bool hideKeyboardIndicator: identifier == "indicator-keyboard" && !hasKeyboard
-                // HAX: messages indicator moves to its own row on the left, clear of the camera hole
-                readonly property bool hideMessagesIndicator: identifier == "indicator-messages"
+                // HAX: messages indicator moves to its own row on the left, clear of the camera
+                // hole - portrait only, see root.isPortrait above
+                readonly property bool hideMessagesIndicator: identifier == "indicator-messages" && root.isPortrait
                 // HAX: this delegate's "parent" is an internal Flickable/Row
                 // whose width is just the compact content width of the
                 // visible icons (and which gets rotated 180deg internally
@@ -483,7 +498,7 @@ Item {
                 }
                 readonly property real safeZoneLeft: root.width / 2 - __indicators.cameraSafeHalfWidth
                 readonly property real safeZoneRight: root.width / 2 + __indicators.cameraSafeHalfWidth
-                readonly property bool hideCameraOverlap: !expanded && absoluteX < safeZoneRight && safeZoneLeft < (absoluteX + width)
+                readonly property bool hideCameraOverlap: !expanded && root.isPortrait && absoluteX < safeZoneRight && safeZoneLeft < (absoluteX + width)
 
                 height: parent.height
                 expanded: indicators.expanded

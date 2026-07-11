@@ -547,6 +547,10 @@ StyledItem {
             minimizedPanelHeight: units.gu(4)
             expandedPanelHeight: units.gu(8)
             applicationMenuContentX: launcher.lockedVisible ? launcher.panelWidth : 0
+            // HAX: Screen.width/height never change on this device - the shell's own coordinate
+            // space stays fixed to the physical (portrait) panel regardless of the focused app's
+            // rotation, so the camera-cutout fix needs the actual app orientation instead.
+            orientationAngle: shell.mainAppWindowOrientationAngle
 
             indicators {
                 hides: [launcher]
