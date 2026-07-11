@@ -1,0 +1,17 @@
+{
+    "icon": "preferences-system-updates-symbolic",
+    "name": "Software Update",
+    "category": "uncategorized-bottom",
+    "priority": 2,
+    "keywords": [
+        "update",
+        "upgrade",
+        "flash",
+        "ota",
+        "craftparking"
+    ],
+    "has-dynamic-keywords": false,
+    "has-dynamic-visibility": false,
+    "entry-component": "EntryComponent.qml",
+    "page-component": "PageComponent.qml"
+}

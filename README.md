@@ -36,6 +36,11 @@ too — more in the installer README.
 - **Restart disappearing again after a fresh flash** — a separate indicator-session gate that
   assumes Unity shows its own combined shutdown/reboot dialog. ([`fixes/indicator-session/`](fixes/indicator-session/))
 - Holding back ~175 packages known to brick this exact image if apt updates them.
+- **No way to check for updates** — no real UBports OTA infra behind this ROM, so there was no
+  way to know a newer build existed short of checking here manually. Added a proper "Software
+  Update" entry in Settings instead — checks a small manifest on GitHub, downloads the zip
+  (hosted on SourceForge, GitHub caps a single release file at 2GB), verifies its checksum, and
+  flashes it through TWRP on confirm. ([`fixes/system-update-panel/`](fixes/system-update-panel/))
 
 Each folder under `fixes/` has the actual patched files and the real story of what was broken.
 

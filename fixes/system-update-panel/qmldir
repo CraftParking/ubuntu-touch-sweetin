@@ -1,0 +1,2 @@
+module Craftparking.SystemSettings.Update
+plugin CraftparkingUpdatePanel
