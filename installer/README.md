@@ -26,6 +26,17 @@ here:
   fails with a plain "I/O error") — worked around by bootstrapping the zip's own bundled busybox
   first and using its `unzip` applet for everything after that.
 
+One non-device-specific bug worth calling out too: `show_progress <fraction> <seconds>` ADDS
+`<fraction>` of the bar's full width to wherever it already sits, it doesn't set an absolute
+position. Every call in an earlier version passed `1.0` (meaning "100% of the whole bar") by
+mistake, so the second call already overshot a full bar and the progress UI snapped to 100%
+within the first few seconds while the real install kept running for another 10+ minutes. Fixed
+by giving each phase a real fraction (sized off actual observed timings on this device, ~650s for
+a full install) so they sum to ~1.0 across the script, and the `dd` loop further splits its own
+slice proportionally by each partition's real byte size via `set_progress`, so the bar moves
+through system/vendor/product/odm/system_ext at roughly the right relative pace instead of
+jumping the same amount regardless of size.
+
 `build-single-zip.sh` builds the actual zip from a LineageOS OTA zip + a UBports zip (neither
 bundled here — multi-GB binaries, wrong thing for a git repo).
 

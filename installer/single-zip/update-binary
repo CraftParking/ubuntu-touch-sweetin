@@ -9,6 +9,16 @@
 # empirically - the archive is ~2.24GB total, so this is unavoidable with plain `unzip`). Fixed by
 # bootstrapping the bundled busybox first (small, always safely under 2GiB) and using ITS unzip
 # applet - which correctly handles large offsets - for every extraction after that.
+#
+# Progress bar note: `show_progress <fraction> <seconds>` ADDS <fraction> of the bar's full width
+# to wherever it currently sits - it's not "set the bar to <fraction>". Every call here used to
+# pass 1.0 (100% of the whole bar) by mistake, so the SECOND call already overshot a full bar and
+# it snapped to 100% within the first few seconds while the real install kept running for minutes
+# after. Fixed by giving each phase a real fraction, sized off actual observed timings from this
+# device (~650s full install), so they sum to ~1.0 across the whole script. The dd loop further
+# splits its own fraction proportionally across each partition's real byte size (computed at
+# runtime), so the bar advances through system/vendor/product/odm/system_ext at roughly the right
+# relative pace instead of jumping between them.
 
 OUTFD=/proc/self/fd/$2;
 ZIP="$3";
@@ -20,9 +30,10 @@ ui_print() {
   done;
 }
 show_progress() { echo "progress $1 $2" > $OUTFD; }
+set_progress() { echo "set_progress $1" > $OUTFD; }
 abort() { ui_print "$*"; exit 1; }
 
-show_progress 1.0 4;
+show_progress 0.006 4;
 ui_print " ";
 ui_print "    _   _ ____  ____            _        ";
 ui_print "   | | | | __ )|  _ \ ___  _ __| |_ ___  ";
@@ -39,6 +50,7 @@ ui_print " the LineageOS+UBports single zip merge, the mkfs/unzip fixes and the 
 ui_print " on top of that rootfs are all my own work - Craftparking (github.com/Craftparking)";
 ui_print " ";
 
+show_progress 0.385 250;
 ui_print "Bootstrapping extraction tool...";
 mkdir -p /tmp/cp-bin;
 unzip -o "$ZIP" "tools/busybox" -d /tmp/cp-bin > /tmp/cp-install.log 2>&1;
@@ -56,22 +68,39 @@ $BB_UNZIP -o "$ZIP" "lineage-parts/system.img" "lineage-parts/vendor.img" "linea
 if [ $? != 0 ]; then abort "Extraction of bundled LineageOS parts failed. Aborting."; fi;
 chmod 755 $CP_EXTRACT/bin/mkfs.f2fs.static;
 
-show_progress 1.0 30;
+show_progress 0.212 138;
 ui_print "Flashing LineageOS base partitions...";
+# proportion this whole phase's bar movement across each dd by that file's real share of the
+# total bytes being written here, so the bar advances at roughly the right relative pace instead
+# of jumping the same amount for a 130MB dtbo.img as for a 1.9GB system.img.
+DD_TOTAL_BYTES=0;
+for part in system vendor product odm system_ext boot dtbo vbmeta; do
+  SZ=$(wc -c < $CP_EXTRACT/lineage-parts/$part.img);
+  DD_TOTAL_BYTES=$(awk "BEGIN{print $DD_TOTAL_BYTES + $SZ}");
+done;
+DD_DONE_FRACTION=0;
 for part in system vendor product odm system_ext; do
   ui_print " -> $part";
+  SZ=$(wc -c < $CP_EXTRACT/lineage-parts/$part.img);
   dd if=$CP_EXTRACT/lineage-parts/$part.img of=/dev/block/mapper/$part bs=4M;
   if [ $? != 0 ]; then abort "Failed writing $part. Aborting."; fi;
+  DD_DONE_FRACTION=$(awk "BEGIN{print $DD_DONE_FRACTION + ($SZ/$DD_TOTAL_BYTES)}");
+  set_progress $DD_DONE_FRACTION;
 done;
 
 ui_print " -> boot (stock LineageOS kernel - overwritten below by the Halium boot image)";
 dd if=$CP_EXTRACT/lineage-parts/boot.img of=/dev/block/bootdevice/by-name/boot bs=4M;
+DD_DONE_FRACTION=$(awk "BEGIN{print $DD_DONE_FRACTION + ($(wc -c < $CP_EXTRACT/lineage-parts/boot.img)/$DD_TOTAL_BYTES)}");
+set_progress $DD_DONE_FRACTION;
 ui_print " -> dtbo";
 dd if=$CP_EXTRACT/lineage-parts/dtbo.img of=/dev/block/bootdevice/by-name/dtbo bs=4M;
+DD_DONE_FRACTION=$(awk "BEGIN{print $DD_DONE_FRACTION + ($(wc -c < $CP_EXTRACT/lineage-parts/dtbo.img)/$DD_TOTAL_BYTES)}");
+set_progress $DD_DONE_FRACTION;
 ui_print " -> vbmeta";
 dd if=$CP_EXTRACT/lineage-parts/vbmeta.img of=/dev/block/bootdevice/by-name/vbmeta bs=4M;
+set_progress 1.0;
 
-show_progress 1.0 5;
+show_progress 0.015 10;
 ui_print "Formatting data partition...";
 umount /data 2>/dev/null;
 DATA_DEV=/dev/block/bootdevice/by-name/userdata;
@@ -83,7 +112,7 @@ ui_print "data partition formatted";
 
 rm -rf $CP_EXTRACT;
 
-show_progress 1.0 15;
+show_progress 0.38 248;
 ui_print " ";
 ui_print "Now installing Ubuntu Touch / UBports rootfs";
 ui_print " ";
@@ -112,7 +141,7 @@ if [ $? != "0" ]; then
   abort "ubports.sh failed";
 fi;
 
-show_progress 1.0 2;
+show_progress 0.002 2;
 umount /vendor;
 umount /data;
 rm -rf /tmp/cp-bin /tmp/cp-install.log /tmp/cp-mkfs.log;
