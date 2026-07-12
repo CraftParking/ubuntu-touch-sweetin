@@ -42,7 +42,6 @@ too — more in the installer README.
   this), flashes through TWRP once you confirm. Runs as a background service so switching apps or
   backing out of the page doesn't kill it mid-download.
   ([`fixes/system-update-panel/`](fixes/system-update-panel/), [`fixes/system-image-dbus/`](fixes/system-image-dbus/))
-- A Craftparking credit on the About page, linking back here. ([`fixes/about-page/`](fixes/about-page/))
 
 Each folder under `fixes/` has the actual patched files and the real story of what was broken.
 
