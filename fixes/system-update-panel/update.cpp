@@ -1,8 +1,10 @@
 #include "update.h"
 
+#include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
-#include <QDir>
+#include <QDBusVariant>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkRequest>
@@ -12,23 +14,24 @@ namespace {
 const char *MANIFEST_URL =
     "https://raw.githubusercontent.com/CraftParking/ubuntu-touch-sweetin/master/latest.json";
 const char *VERSION_FILE = "/etc/craftparking-version";
+const char *SERVICE = "com.canonical.SystemImage";
+const char *PATH = "/Service";
+const char *IFACE = "com.canonical.SystemImage";
 }
 
 Update::Update(QObject *parent)
     : QObject(parent)
-    , m_downloadHash(QCryptographicHash::Sha256)
 {
+    QDBusConnection::systemBus().connect(
+        SERVICE, PATH, IFACE, "CraftparkingDownloadProgress",
+        this, SLOT(onDBusDownloadProgress(qlonglong, qlonglong)));
+    QDBusConnection::systemBus().connect(
+        SERVICE, PATH, IFACE, "CraftparkingDownloadFinished",
+        this, SLOT(onDBusDownloadFinished(bool, QString)));
 }
 
 Update::~Update()
 {
-}
-
-QString Update::downloadPath()
-{
-    QString dir = QDir::homePath() + "/.cache/craftparking-update";
-    QDir().mkpath(dir);
-    return dir + "/update.zip";
 }
 
 QString Update::currentVersion() const
@@ -81,95 +84,71 @@ void Update::onManifestReply()
     emit checkFinished(available, version, zipUrl, sha256, size, QString());
 }
 
-void Update::downloadUpdate(const QString &zipUrl, const QString &expectedSha256)
+void Update::downloadUpdate(const QString &zipUrl, const QString &expectedSha256,
+                             qlonglong expectedSize)
 {
-    if (m_downloadReply != nullptr)
-        return; // already in progress
-
-    m_downloadFile.setFileName(downloadPath());
-    if (!m_downloadFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        emit downloadFinished(false, QStringLiteral("couldn't open local file for writing"));
+    QDBusInterface iface(SERVICE, PATH, IFACE, QDBusConnection::systemBus(), this);
+    if (!iface.isValid()) {
+        emit downloadFinished(false, QStringLiteral("system-image service isn't available"));
         return;
     }
-    m_downloadHash.reset();
-    m_expectedSha256 = expectedSha256.toLower();
-
-    QNetworkRequest request{QUrl(zipUrl)};
-    request.setRawHeader("User-Agent", "craftparking-update-panel");
-    // SourceForge (and most non-GitHub hosts we might point at) redirects
-    // to whichever mirror is closest - Qt won't follow that automatically.
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-    m_downloadReply = m_nam.get(request);
-    connect(m_downloadReply, &QNetworkReply::readyRead,
-            this, &Update::onDownloadReadyRead);
-    connect(m_downloadReply, &QNetworkReply::downloadProgress,
-            this, &Update::onDownloadProgressChanged);
-    connect(m_downloadReply, &QNetworkReply::finished,
-            this, &Update::onDownloadReply);
-}
-
-void Update::onDownloadReadyRead()
-{
-    QByteArray chunk = m_downloadReply->readAll();
-    m_downloadHash.addData(chunk);
-    m_downloadFile.write(chunk);
-}
-
-void Update::onDownloadProgressChanged(qint64 received, qint64 total)
-{
-    if (total <= 0)
+    QDBusReply<bool> reply = iface.call(
+        "CraftparkingStartDownload", zipUrl, expectedSha256, expectedSize);
+    if (!reply.isValid()) {
+        emit downloadFinished(false, reply.error().message());
         return;
-    emit downloadProgress(static_cast<int>((received * 100) / total));
+    }
+    if (!reply.value()) {
+        // Already running (e.g. this page was reopened) - not an error,
+        // the progress/finished signals we're already connected to will
+        // keep reporting the existing download either way.
+        queryDownloadStatus();
+    }
 }
 
 void Update::cancelDownload()
 {
-    if (m_downloadReply != nullptr)
-        m_downloadReply->abort();
+    QDBusInterface iface(SERVICE, PATH, IFACE, QDBusConnection::systemBus(), this);
+    iface.call("CraftparkingCancelDownload");
 }
 
-void Update::onDownloadReply()
+void Update::queryDownloadStatus()
 {
-    QNetworkReply *reply = m_downloadReply;
-    m_downloadReply = nullptr;
-    m_downloadFile.close();
-
-    QNetworkReply::NetworkError error = reply->error();
-    QString errorString = reply->errorString();
-    reply->deleteLater();
-
-    if (error != QNetworkReply::NoError) {
-        QFile::remove(downloadPath());
-        emit downloadFinished(false, errorString);
+    QDBusInterface iface(SERVICE, PATH, IFACE, QDBusConnection::systemBus(), this);
+    QDBusReply<QVariantMap> reply = iface.call("CraftparkingDownloadStatus");
+    if (!reply.isValid())
         return;
+    QVariantMap status = reply.value();
+    bool inProgress = status.value("in_progress").toBool();
+    qlonglong received = status.value("received").toLongLong();
+    qlonglong total = status.value("total").toLongLong();
+    emit downloadStatus(inProgress, received, total);
+    if (status.value("done").toBool()) {
+        emit downloadFinished(status.value("success").toBool(),
+                               status.value("error").toString());
     }
+}
 
-    QString actualSha256 = QString::fromLatin1(m_downloadHash.result().toHex());
-    if (actualSha256 != m_expectedSha256) {
-        QFile::remove(downloadPath());
-        emit downloadFinished(false,
-            QStringLiteral("checksum mismatch - downloaded file was corrupted or incomplete"));
-        return;
-    }
+void Update::onDBusDownloadProgress(qlonglong received, qlonglong total)
+{
+    emit downloadProgress(received, total);
+}
 
-    emit downloadFinished(true, QString());
+void Update::onDBusDownloadFinished(bool success, const QString &error)
+{
+    emit downloadFinished(success, error);
 }
 
 bool Update::applyUpdate()
 {
-    QDBusInterface iface(
-                "com.canonical.SystemImage",
-                "/Service",
-                "com.canonical.SystemImage",
-                QDBusConnection::systemBus(),
-                this);
+    QDBusInterface iface(SERVICE, PATH, IFACE, QDBusConnection::systemBus(), this);
 
     if (!iface.isValid()) {
         qWarning() << iface.interface() << "isn't valid";
         return false;
     }
 
-    QDBusReply<void> reply = iface.call("CraftparkingApplyUpdate", downloadPath());
+    QDBusReply<void> reply = iface.call("CraftparkingApplyUpdate");
     if (!reply.isValid()) {
         qWarning() << reply.error().message();
         return false;

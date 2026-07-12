@@ -13,11 +13,21 @@ ItemPage {
     objectName: "craftparkingUpdatePage"
     flickable: scrollWidget
 
+    // The download runs inside system-image-dbus, not this page - it keeps
+    // going whether or not this page (or Settings itself) is even open.
+    // Resync with whatever it's actually doing every time this page loads,
+    // instead of assuming a blank/idle state.
+    Component.onCompleted: backend.queryDownloadStatus()
+
     property bool checking: false
     property bool updateAvailable: false
     property bool downloading: false
     property bool readyToInstall: false
-    property int progressValue: 0
+    property real receivedBytes: 0
+    property real totalBytes: 0
+    property real downloadSpeed: 0  // bytes/sec, smoothed
+    property real lastProgressBytes: 0
+    property real lastProgressTime: 0
     property string statusText: i18n.tr("Installed version: %1").arg(backend.currentVersion())
     property string pendingVersion: ""
     property string pendingZipUrl: ""
@@ -31,6 +41,23 @@ ItemPage {
         if (mb < 1024)
             return mb.toFixed(0) + " MB"
         return (mb / 1024).toFixed(2) + " GB"
+    }
+
+    function humanSpeed(bytesPerSec) {
+        if (bytesPerSec <= 0)
+            return ""
+        return (bytesPerSec / (1024 * 1024)).toFixed(1) + " MB/s"
+    }
+
+    function humanEta(seconds) {
+        if (!isFinite(seconds) || seconds <= 0)
+            return ""
+        if (seconds < 60)
+            return Math.ceil(seconds) + "s"
+        var m = Math.floor(seconds / 60)
+        if (m < 60)
+            return m + "m " + Math.ceil(seconds % 60) + "s"
+        return Math.floor(m / 60) + "h " + (m % 60) + "m"
     }
 
     CraftparkingUpdatePanel {
@@ -55,17 +82,50 @@ ItemPage {
             root.statusText = i18n.tr("Update available: %1").arg(latestVersion)
         }
 
-        onDownloadProgress: root.progressValue = percent
+        onDownloadProgress: {
+            var now = Date.now()
+            var dt = (now - root.lastProgressTime) / 1000
+            if (root.lastProgressTime > 0 && dt > 0.2) {
+                var instSpeed = (received - root.lastProgressBytes) / dt
+                root.downloadSpeed = root.downloadSpeed > 0
+                    ? (root.downloadSpeed * 0.7 + instSpeed * 0.3)
+                    : instSpeed
+                root.lastProgressBytes = received
+                root.lastProgressTime = now
+            } else if (root.lastProgressTime === 0) {
+                root.lastProgressBytes = received
+                root.lastProgressTime = now
+            }
+            root.receivedBytes = received
+            root.totalBytes = total
+        }
 
         onDownloadFinished: {
             root.downloading = false
             if (success) {
                 root.readyToInstall = true
                 root.statusText = i18n.tr("Downloaded %1, ready to install").arg(root.pendingVersion)
+            } else if (error === "cancelled") {
+                root.statusText = i18n.tr("Download cancelled")
             } else {
                 root.readyToInstall = false
                 root.statusText = i18n.tr("Download failed: %1").arg(error)
             }
+        }
+
+        onDownloadStatus: {
+            if (!inProgress)
+                return
+            // A download from a previous visit to this page is still
+            // running in the background service - pick up its progress
+            // instead of showing a blank/idle UI.
+            root.downloading = true
+            root.receivedBytes = received
+            root.totalBytes = total
+            root.downloadSpeed = 0
+            root.lastProgressBytes = received
+            root.lastProgressTime = Date.now()
+            root.statusText = i18n.tr("Downloading...")
         }
     }
 
@@ -107,7 +167,7 @@ ItemPage {
 
             ActivityIndicator {
                 anchors.horizontalCenter: parent.horizontalCenter
-                running: root.checking || root.downloading
+                running: root.checking
                 visible: running
             }
 
@@ -117,8 +177,37 @@ ItemPage {
                 anchors.margins: units.gu(2)
                 visible: root.downloading
                 minimumValue: 0
-                maximumValue: 100
-                value: root.progressValue
+                maximumValue: root.totalBytes > 0 ? root.totalBytes : 1
+                value: root.receivedBytes
+                indeterminate: root.totalBytes <= 0
+            }
+
+            ListItem.Caption {
+                visible: root.downloading
+                text: {
+                    var parts = []
+                    parts.push(root.totalBytes > 0
+                        ? i18n.tr("%1 of %2").arg(root.humanSize(root.receivedBytes)).arg(root.humanSize(root.totalBytes))
+                        : root.humanSize(root.receivedBytes))
+                    if (root.downloadSpeed > 0)
+                        parts.push(root.humanSpeed(root.downloadSpeed))
+                    if (root.totalBytes > 0 && root.downloadSpeed > 0) {
+                        var eta = (root.totalBytes - root.receivedBytes) / root.downloadSpeed
+                        parts.push(i18n.tr("%1 left").arg(root.humanEta(eta)))
+                    }
+                    return parts.join(" • ")
+                }
+            }
+
+            SettingsListItems.StandardProgression {
+                showDivider: false
+                objectName: "craftparkingCancelDownload"
+                visible: root.downloading
+                text: i18n.tr("Cancel")
+                onClicked: {
+                    backend.cancelDownload()
+                    root.downloading = false
+                }
             }
 
             SettingsListItems.StandardProgression {
@@ -144,9 +233,13 @@ ItemPage {
                       : i18n.tr("Download Update")
                 onClicked: {
                     root.downloading = true
-                    root.progressValue = 0
+                    root.receivedBytes = 0
+                    root.totalBytes = root.pendingSize
+                    root.downloadSpeed = 0
+                    root.lastProgressBytes = 0
+                    root.lastProgressTime = 0
                     root.statusText = i18n.tr("Downloading...")
-                    backend.downloadUpdate(root.pendingZipUrl, root.pendingSha256)
+                    backend.downloadUpdate(root.pendingZipUrl, root.pendingSha256, root.pendingSize)
                 }
             }
 

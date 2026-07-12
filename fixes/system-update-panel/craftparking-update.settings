@@ -1,7 +1,7 @@
 {
     "icon": "preferences-system-updates-symbolic",
     "name": "Software Update",
-    "category": "uncategorized-bottom",
+    "category": "system",
     "priority": 2,
     "keywords": [
         "update",
@@ -12,6 +12,5 @@
     ],
     "has-dynamic-keywords": false,
     "has-dynamic-visibility": false,
-    "entry-component": "EntryComponent.qml",
     "page-component": "PageComponent.qml"
 }
